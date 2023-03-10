@@ -1,0 +1,76 @@
+# Definir el lenguaje utilizado en el proyecto
+language: node_js
+node_js:
+  - "14"
+
+# Definir los stages del pipeline
+stages:
+  - build
+  - test 
+  - package
+  - deploy
+
+# Configuración del job de compilación
+build:
+  stage: build
+  script:
+    - npm install # Instalar las dependencias
+    - npm run build # Compilar el código fuente
+
+testing:
+  stage: test
+ # script: npm test
+
+- task: SonarQubePrepare@4
+  inputs:
+    SonarQube: 'sonarqube'
+    scannerMode: 'CLI'
+    configMode: 'manual'
+    cliProjectKey: 'omegateam_fullstackbook-todo-nestjs'
+    cliProjectName: 'omegateam_fullstackbook-todo-nestjs'
+    cliSources: 'src'
+    extraProperties: |
+      sonar.tests=src/tests
+      sonar.test.inclusions=**/*.spec.ts
+      sonar.typescript.lcov.reportPaths=coverage/lcov.info
+- script: |
+    npm run test:coverage # Ejecuta pruebas unitarias y genera informe de cobertura
+    sonar-scanner # Analiza el código y las pruebas unitarias en SonarQube
+  displayName: 'Run tests and analyze with SonarQube'
+
+# Configuración del job de generación de artefacto
+package:
+  stage: package
+  script:
+    - mkdir -p dist # Crear el directorio de salida
+    - cp -r public dist/ # Copiar los archivos estáticos
+    - cp -r server dist/ # Copiar los archivos del servidor
+    - cp package.json dist/ # Copiar el archivo package.json
+  artifacts:
+    paths:
+      - dist/*.json # Almacenar el archivo package.json
+      - dist/server/ # Almacenar los archivos del servidor
+      - dist/public/ # Almacenar los archivos estáticos
+
+# Configuración del job de creación de imagen Docker
+build_docker_image:
+  stage: deploy
+  script:
+    - docker build -t $DOCKER_IMAGE_NAME:$CI_COMMIT_SHA . # Crear la imagen Docker con el nombre y el tag especificado
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY # Iniciar sesión en el registro de imágenes de Docker
+    - docker push $DOCKER_IMAGE_NAME:$CI_COMMIT_SHA # Subir la imagen al registro de imágenes de Docker
+
+# Configuración del job de despliegue en ambiente de desarrollo
+deploy_dev:
+  stage: deploy
+  script:
+    - ssh user@server "docker stop $DOCKER_CONTAINER_NAME || true" # Detener el contenedor Docker si está en ejecución
+    - ssh user@server "docker rm $DOCKER_CONTAINER_NAME || true" # Eliminar el contenedor Docker si existe
+    - ssh user@server "docker pull $DOCKER_IMAGE_NAME:$CI_COMMIT_SHA" # Descargar la última imagen Docker desde el registro de imágenes
+    - ssh user@server "docker run -d --name $DOCKER_CONTAINER_NAME -p $DOCKER_PORT:$DOCKER_PORT $DOCKER_IMAGE_NAME:$CI_COMMIT_SHA" # Ejecutar el contenedor Docker con la nueva imagen
+
+# Definir las variables de entorno utilizadas en el pipeline
+variables:
+  DOCKER_IMAGE_NAME: fullstackbook-todo-nestjs # Nombre de la imagen Docker
+  DOCKER_CONTAINER_NAME: fullstackbook-todo-nestjs # Nombre del contenedor Docker
+  DOCKER_PORT: 3000 # Puerto utilizado por la aplicación
